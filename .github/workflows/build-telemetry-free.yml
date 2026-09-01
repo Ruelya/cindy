@@ -1,0 +1,93 @@
+name: telemetry-free-windows-build
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref/SHA to build (blank = current ref)
+        required: false
+        default: ''
+        type: string
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref/SHA to build
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: telemetry-free-windows-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows-x64:
+    name: Windows x64 (telemetry-free)
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+          lfs: true
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: pnpm install --frozen-lockfile
+
+      - name: Strip desktop telemetry (fail closed)
+        run: node .github/scripts/strip-telemetry.mjs
+
+      - name: Show telemetry-free patch
+        shell: bash
+        run: git diff -- apps/desktop/src/renderer/main-entry.tsx apps/desktop/src/main/heartbeatService.ts
+
+      - name: Typecheck desktop after telemetry stripping
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: pnpm --filter desktop typecheck
+
+      - name: Package unsigned Windows x64 build
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: pnpm release:package -- --platform win32 --arch x64 --region global --no-sign
+
+      - name: Verify installer output
+        shell: pwsh
+        run: |
+          $artifactRoot = 'release/artifacts/global/unversioned/win32-x64'
+          if (-not (Test-Path $artifactRoot)) {
+            throw "Expected artifact directory not found: $artifactRoot"
+          }
+          $installers = Get-ChildItem -Path $artifactRoot -File -Recurse | Where-Object { $_.Extension -in '.exe', '.zip' }
+          if (-not $installers) {
+            throw "No Windows installer/package found under $artifactRoot"
+          }
+          $installers | Format-Table Name, Length, FullName
+
+      - name: Upload telemetry-free build
+        uses: actions/upload-artifact@v4
+        with:
+          name: cindy-telemetry-free-windows-x64-${{ github.run_number }}
+          path: release/artifacts/global/unversioned/win32-x64/**
+          if-no-files-found: error
+          retention-days: 14
