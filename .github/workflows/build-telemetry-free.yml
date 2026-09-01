@@ -30,27 +30,41 @@ jobs:
   build-windows-x64:
     name: Windows x64 (telemetry-free)
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
+    env:
+      # Electron Forge/Vite is a child Node process spawned by package-desktop.mjs.
+      # Keep the heap budget at job scope so the entire Node process tree inherits it.
+      # Upstream's own public CI uses an 8 GB heap on hosted runners for this codebase.
+      NODE_OPTIONS: --max-old-space-size=8192
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
           fetch-depth: 0
           lfs: true
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
           run_install: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
+
+      - name: Verify Node heap budget
+        shell: pwsh
+        run: |
+          $heapMiB = node -e "const v8=require('node:v8'); process.stdout.write(String(Math.round(v8.getHeapStatistics().heap_size_limit/1024/1024)))"
+          Write-Host "Effective V8 heap limit: $heapMiB MiB"
+          if ([int]$heapMiB -lt 7500) {
+            throw "NODE_OPTIONS did not propagate correctly; expected >= 7500 MiB heap, got $heapMiB MiB"
+          }
 
       - name: Install dependencies
         env:
@@ -60,14 +74,32 @@ jobs:
       - name: Strip desktop telemetry (fail closed)
         run: node .github/scripts/strip-telemetry.mjs
 
-      - name: Show telemetry-free patch
+      - name: Validate telemetry-free patch scope
         shell: bash
-        run: git diff -- apps/desktop/src/renderer/main-entry.tsx apps/desktop/src/main/heartbeatService.ts
+        run: |
+          set -euo pipefail
+          expected=$'apps/desktop/src/main/heartbeatService.ts\napps/desktop/src/renderer/main-entry.tsx'
+          actual="$(git diff --name-only | sort)"
+          printf 'Changed files:\n%s\n' "$actual"
+          if [[ "$actual" != "$expected" ]]; then
+            echo 'Telemetry stripping changed an unexpected file or missed an expected file.' >&2
+            exit 1
+          fi
+          git diff --check
+          git diff --stat -- apps/desktop/src/main/heartbeatService.ts apps/desktop/src/renderer/main-entry.tsx
+          git diff --unified=3 -- apps/desktop/src/main/heartbeatService.ts apps/desktop/src/renderer/main-entry.tsx
 
       - name: Typecheck desktop after telemetry stripping
-        env:
-          NODE_OPTIONS: --max-old-space-size=6144
         run: pnpm --filter desktop typecheck
+
+      - name: Re-verify heap before packaging
+        shell: pwsh
+        run: |
+          $heapMiB = node -e "const v8=require('node:v8'); process.stdout.write(String(Math.round(v8.getHeapStatistics().heap_size_limit/1024/1024)))"
+          Write-Host "Packaging V8 heap limit: $heapMiB MiB"
+          if ([int]$heapMiB -lt 7500) {
+            throw "Packaging heap budget regressed before Electron Forge: $heapMiB MiB"
+          }
 
       - name: Package unsigned Windows x64 build
         env:
@@ -88,7 +120,7 @@ jobs:
           $installers | Format-Table Name, Length, FullName
 
       - name: Upload telemetry-free build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cindy-telemetry-free-windows-x64-${{ github.run_number }}
           path: release/artifacts/global/unversioned/win32-x64/**
