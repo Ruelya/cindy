@@ -1,0 +1,88 @@
+name: sync-upstream-and-build
+
+on:
+  schedule:
+    # Four times per day. GitHub cron uses UTC.
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      build_even_if_up_to_date:
+        description: Build even when upstream has no new commits
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-main
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Merge makecindy/cindy into fork
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      changed: ${{ steps.result.outputs.changed }}
+      merged_sha: ${{ steps.result.outputs.merged_sha }}
+
+    steps:
+      - name: Checkout fork main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          lfs: true
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/makecindy/cindy.git
+          git fetch --prune upstream main
+
+      - name: Merge upstream main
+        id: merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          before="$(git rev-parse HEAD)"
+          echo "Fork before merge: $before"
+          echo "Upstream main:     $(git rev-parse upstream/main)"
+
+          # Intentionally use a real merge instead of reset/force-push so fork-only
+          # commits (including telemetry-free CI) are preserved. A conflict fails
+          # this workflow and nothing is pushed.
+          git merge --no-edit upstream/main
+
+          after="$(git rev-parse HEAD)"
+          if [[ "$after" == "$before" ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "merged_sha=$after" >> "$GITHUB_OUTPUT"
+
+      - name: Push merged main
+        if: steps.merge.outputs.changed == 'true'
+        run: git push origin HEAD:main
+
+      - name: Export sync result
+        id: result
+        shell: bash
+        run: |
+          echo "changed=${{ steps.merge.outputs.changed }}" >> "$GITHUB_OUTPUT"
+          echo "merged_sha=${{ steps.merge.outputs.merged_sha }}" >> "$GITHUB_OUTPUT"
+
+  build-telemetry-free:
+    name: Build merged telemetry-free Windows package
+    needs: sync
+    if: needs.sync.outputs.changed == 'true' || inputs.build_even_if_up_to_date == true
+    uses: ./.github/workflows/build-telemetry-free.yml
+    with:
+      ref: ${{ needs.sync.outputs.merged_sha }}
