@@ -127,6 +127,7 @@ import {
   type RenameSessionsConfirmInteractionSnapshot,
 } from '../session-title-rename/index.js';
 import { getBrowserAvailability, openBrowserForLogin } from '../mcp-integrations/browser.js';
+import { isBrowserOpenForLoginError } from '../../shared/browserBackend.js';
 import {
   getActiveCodexBridgeInstanceId,
   getActiveCodexBridgeServerNames,
@@ -946,6 +947,7 @@ import {
   recordRecoveredSessionRuntimeAxisMutation,
   recordUserSessionRuntimeAxisMutation,
   recordUserSessionRuntimeMutation,
+  resolveCompatibleSessionRuntimeEffort,
   resolveCompatibleSessionRuntimeAxisPatch,
   resolveSessionRuntimeAxes,
   sessionRuntimeGenerationMatches,
@@ -7860,7 +7862,25 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         setSessionEffort(session.id, runtimeOverride.effort);
         setSessionFastMode(session.id, runtimeOverride.fastMode);
       } else {
-        setSessionEffort(session.id, efRow?.effort);
+        // DB 行里的 effort 是历史合法值(固定 effort 模型切换时省略了字段),
+        // hydrate 时必须按**当前模型能力**归一化:固定 effort 模型 → null,
+        // 可调模型 → 兼容档位。直接回灌旧值会把不支持 reasoningEffort 的模型
+        // 请求打给 provider 被拒(issue #3691 / PR #3727 Greptile P1)。
+        const hydrateProviderId = getSessionProvider(session.id) ?? o.providerId ?? null;
+        const hydrateProvider = getActiveCatalog().providers.find(
+          (candidate) => candidate.id === hydrateProviderId,
+        );
+        const hydrateModel = findCatalogModel(
+          hydrateProvider,
+          session.model,
+          o.agentKind,
+        );
+        setSessionEffort(
+          session.id,
+          hydrateModel
+            ? resolveCompatibleSessionRuntimeEffort(hydrateModel, efRow?.effort ?? null)
+            : efRow?.effort,
+        );
         setSessionFastMode(session.id, !!efRow?.fastMode);
       }
     } catch (err) {
@@ -15810,7 +15830,14 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             );
           }
           if (atomicSelection) {
-            patch.effort = atomicSelection.effort;
+            // 固定 effort 模型(efforts.length === 0)的运行时语义是 effort: null,
+            // 但 sessions.effort 列是 NOT NULL —— 运行时能力与持久化表示在此分离:
+            // DB patch 省略该字段,行内保留旧模型的历史合法值;内存 store(上面
+            // commitControlStores / setSessionEffort)照常清为 null,重启后按目标
+            // 模型能力重新归一化。不写 ''/"none" 等枚举外值,不改 schema。
+            if (atomicSelection.effort !== null) {
+              patch.effort = atomicSelection.effort;
+            }
             patch.fastMode = atomicSelection.fastMode;
           }
           try {
@@ -17016,7 +17043,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       await openBrowserForLogin();
       return { launched: true };
     } catch (err) {
-      throwIpcError('INTERNAL', err instanceof Error ? err.message : String(err));
+      if (isBrowserOpenForLoginError(err)) {
+        throwIpcError(err.code, err.code);
+      }
+      log.warn('browser.openForLogin failed', err);
+      throwIpcError('INTERNAL', 'Failed to open the agent browser.');
     }
   });
 
