@@ -19,7 +19,7 @@ function replaceRegexExactlyOnce(file, regex, after, label) {
 const rendererEntry = 'apps/desktop/src/renderer/main-entry.tsx';
 const heartbeatService = 'apps/desktop/src/main/heartbeatService.ts';
 
-// Match source structure while tolerating Windows CRLF checkouts.
+// GitHub's Windows runner may checkout CRLF; keep these structural matches line-ending agnostic.
 replaceRegexExactlyOnce(
   rendererEntry,
   /^import\s+\{\s*initTapdb\s*\}\s+from\s+['"]\.\/analytics\/tapdbClient['"];?\r?$/m,
