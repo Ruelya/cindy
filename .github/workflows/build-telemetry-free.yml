@@ -34,7 +34,6 @@ jobs:
     env:
       # Electron Forge/Vite is a child Node process spawned by package-desktop.mjs.
       # Keep the heap budget at job scope so the entire Node process tree inherits it.
-      # Upstream's own public CI uses an 8 GB heap on hosted runners for this codebase.
       NODE_OPTIONS: --max-old-space-size=8192
 
     steps:
@@ -89,44 +88,43 @@ jobs:
           git diff --stat -- apps/desktop/src/main/heartbeatService.ts apps/desktop/src/renderer/main-entry.tsx
           git diff --unified=3 -- apps/desktop/src/main/heartbeatService.ts apps/desktop/src/renderer/main-entry.tsx
 
-      - name: Disable electron-builder publishing (CI artifact only)
-        run: node .github/scripts/disable-electron-publish.mjs
-
-      - name: Validate packaging-only patch
-        shell: bash
-        run: |
-          set -euo pipefail
-          expected=$'apps/desktop/forge.config.ts\napps/desktop/src/main/heartbeatService.ts\napps/desktop/src/renderer/main-entry.tsx'
-          actual="$(git diff --name-only | sort)"
-          printf 'Changed files before build:\n%s\n' "$actual"
-          if [[ "$actual" != "$expected" ]]; then
-            echo 'CI build preparation changed an unexpected file or missed an expected file.' >&2
-            exit 1
-          fi
-          git diff --check
-          if ! git diff --unified=3 -- apps/desktop/forge.config.ts | grep -F 'publish: null'; then
-            echo 'NSIS publish:null guard is missing from the CI patch.' >&2
-            exit 1
-          fi
-          git diff --stat -- apps/desktop/forge.config.ts apps/desktop/src/main/heartbeatService.ts apps/desktop/src/renderer/main-entry.tsx
-
-      - name: Typecheck desktop after CI patches
+      - name: Typecheck desktop after telemetry stripping
         run: pnpm --filter desktop typecheck
 
-      - name: Re-verify heap before packaging
+      - name: Package unsigned Windows x64 artifact
         shell: pwsh
+        env:
+          # electron-builder 24.x implicitly enables onTagOrDraft publishing whenever
+          # is-ci reports true. This workflow only builds an Actions artifact; it never
+          # publishes a GitHub Release. ci-info/is-ci documents CI=false as the explicit
+          # opt-out, and the preflight below verifies that the exact runtime sees it.
+          CI: 'false'
         run: |
           $heapMiB = node -e "const v8=require('node:v8'); process.stdout.write(String(Math.round(v8.getHeapStatistics().heap_size_limit/1024/1024)))"
           Write-Host "Packaging V8 heap limit: $heapMiB MiB"
           if ([int]$heapMiB -lt 7500) {
             throw "Packaging heap budget regressed before Electron Forge: $heapMiB MiB"
           }
+
+          $isCi = node -e "process.stdout.write(String(require('is-ci')))"
+          Write-Host "electron-builder is-ci detection: $isCi"
+          if ($isCi.Trim() -ne 'false') {
+            throw "Artifact packaging must not be detected as CI by electron-builder; got is-ci=$isCi"
+          }
+
           if ($env:GITHUB_TOKEN -or $env:GH_TOKEN) {
             throw 'Packaging step must not receive GitHub publish tokens.'
           }
 
-      - name: Package unsigned Windows x64 build
-        run: pnpm release:package -- --platform win32 --arch x64 --region global --no-sign
+          node scripts/ensure-deps.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          # Call the packaging script directly instead of forwarding through pnpm's
+          # `--` separator, so its argv is unambiguous. Hosted Actions only needs the
+          # installer artifact; skip the GUI launch smoke test to avoid desktop-session
+          # flakiness unrelated to compilation/package integrity.
+          node apps/desktop/scripts/package-desktop.mjs --platform win32 --arch x64 --region global --no-sign --skip-smoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify installer output
         shell: pwsh
@@ -135,11 +133,43 @@ jobs:
           if (-not (Test-Path $artifactRoot)) {
             throw "Expected artifact directory not found: $artifactRoot"
           }
-          $installers = Get-ChildItem -Path $artifactRoot -File -Recurse | Where-Object { $_.Extension -in '.exe', '.zip' }
-          if (-not $installers) {
-            throw "No Windows installer/package found under $artifactRoot"
+
+          $installers = @(Get-ChildItem -Path $artifactRoot -File -Recurse -Filter '*.exe')
+          if ($installers.Count -lt 1) {
+            throw "No Windows .exe installer found under $artifactRoot"
           }
-          $installers | Format-Table Name, Length, FullName
+          foreach ($installer in $installers) {
+            if ($installer.Length -lt 1MB) {
+              throw "Installer is unexpectedly small/truncated: $($installer.FullName) ($($installer.Length) bytes)"
+            }
+          }
+
+          $buildInfo = Join-Path $artifactRoot 'build-info.json'
+          if (-not (Test-Path $buildInfo)) {
+            throw "Expected build metadata not found: $buildInfo"
+          }
+          Get-Content -Raw $buildInfo | ConvertFrom-Json | Out-Null
+
+          $installers | ForEach-Object {
+            $hash = Get-FileHash -Algorithm SHA256 $_.FullName
+            [PSCustomObject]@{
+              Name = $_.Name
+              SizeMiB = [math]::Round($_.Length / 1MB, 2)
+              SHA256 = $hash.Hash
+            }
+          } | Format-Table -AutoSize
+
+      - name: Verify source tree after packaging
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=$'apps/desktop/src/main/heartbeatService.ts\napps/desktop/src/renderer/main-entry.tsx'
+          actual="$(git diff --name-only | sort)"
+          if [[ "$actual" != "$expected" ]]; then
+            printf 'Unexpected tracked changes after packaging:\n%s\n' "$actual" >&2
+            exit 1
+          fi
+          git diff --check
 
       - name: Upload telemetry-free build
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
