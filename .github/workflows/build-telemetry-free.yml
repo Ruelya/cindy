@@ -80,7 +80,7 @@ jobs:
           set -euo pipefail
           expected=$'apps/desktop/src/main/heartbeatService.ts\napps/desktop/src/renderer/main-entry.tsx'
           actual="$(git diff --name-only | sort)"
-          printf 'Changed files:\n%s\n' "$actual"
+          printf 'Changed files after telemetry strip:\n%s\n' "$actual"
           if [[ "$actual" != "$expected" ]]; then
             echo 'Telemetry stripping changed an unexpected file or missed an expected file.' >&2
             exit 1
@@ -89,7 +89,28 @@ jobs:
           git diff --stat -- apps/desktop/src/main/heartbeatService.ts apps/desktop/src/renderer/main-entry.tsx
           git diff --unified=3 -- apps/desktop/src/main/heartbeatService.ts apps/desktop/src/renderer/main-entry.tsx
 
-      - name: Typecheck desktop after telemetry stripping
+      - name: Disable electron-builder publishing (CI artifact only)
+        run: node .github/scripts/disable-electron-publish.mjs
+
+      - name: Validate packaging-only patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=$'apps/desktop/forge.config.ts\napps/desktop/src/main/heartbeatService.ts\napps/desktop/src/renderer/main-entry.tsx'
+          actual="$(git diff --name-only | sort)"
+          printf 'Changed files before build:\n%s\n' "$actual"
+          if [[ "$actual" != "$expected" ]]; then
+            echo 'CI build preparation changed an unexpected file or missed an expected file.' >&2
+            exit 1
+          fi
+          git diff --check
+          if ! git diff --unified=3 -- apps/desktop/forge.config.ts | grep -F 'publish: null'; then
+            echo 'NSIS publish:null guard is missing from the CI patch.' >&2
+            exit 1
+          fi
+          git diff --stat -- apps/desktop/forge.config.ts apps/desktop/src/main/heartbeatService.ts apps/desktop/src/renderer/main-entry.tsx
+
+      - name: Typecheck desktop after CI patches
         run: pnpm --filter desktop typecheck
 
       - name: Re-verify heap before packaging
@@ -100,10 +121,11 @@ jobs:
           if ([int]$heapMiB -lt 7500) {
             throw "Packaging heap budget regressed before Electron Forge: $heapMiB MiB"
           }
+          if ($env:GITHUB_TOKEN -or $env:GH_TOKEN) {
+            throw 'Packaging step must not receive GitHub publish tokens.'
+          }
 
       - name: Package unsigned Windows x64 build
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
         run: pnpm release:package -- --platform win32 --arch x64 --region global --no-sign
 
       - name: Verify installer output
