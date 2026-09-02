@@ -35,6 +35,9 @@ jobs:
       # Electron Forge/Vite is a child Node process spawned by package-desktop.mjs.
       # Keep the heap budget at job scope so the entire Node process tree inherits it.
       NODE_OPTIONS: --max-old-space-size=8192
+      # package-desktop.mjs writes artifacts relative to apps/desktop, not repository root.
+      # Keep one canonical path so verification and upload cannot drift apart again.
+      ARTIFACT_ROOT: apps/desktop/release/artifacts/global/unversioned/win32-x64
 
     steps:
       - name: Checkout source
@@ -129,12 +132,13 @@ jobs:
       - name: Verify installer output
         shell: pwsh
         run: |
-          $artifactRoot = 'release/artifacts/global/unversioned/win32-x64'
-          if (-not (Test-Path $artifactRoot)) {
+          $artifactRoot = $env:ARTIFACT_ROOT
+          Write-Host "Verifying artifact root: $artifactRoot"
+          if (-not (Test-Path -LiteralPath $artifactRoot -PathType Container)) {
             throw "Expected artifact directory not found: $artifactRoot"
           }
 
-          $installers = @(Get-ChildItem -Path $artifactRoot -File -Recurse -Filter '*.exe')
+          $installers = @(Get-ChildItem -LiteralPath $artifactRoot -File -Recurse -Filter '*.exe')
           if ($installers.Count -lt 1) {
             throw "No Windows .exe installer found under $artifactRoot"
           }
@@ -145,13 +149,13 @@ jobs:
           }
 
           $buildInfo = Join-Path $artifactRoot 'build-info.json'
-          if (-not (Test-Path $buildInfo)) {
+          if (-not (Test-Path -LiteralPath $buildInfo -PathType Leaf)) {
             throw "Expected build metadata not found: $buildInfo"
           }
-          Get-Content -Raw $buildInfo | ConvertFrom-Json | Out-Null
+          Get-Content -Raw -LiteralPath $buildInfo | ConvertFrom-Json | Out-Null
 
           $installers | ForEach-Object {
-            $hash = Get-FileHash -Algorithm SHA256 $_.FullName
+            $hash = Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName
             [PSCustomObject]@{
               Name = $_.Name
               SizeMiB = [math]::Round($_.Length / 1MB, 2)
@@ -175,6 +179,6 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cindy-telemetry-free-windows-x64-${{ github.run_number }}
-          path: release/artifacts/global/unversioned/win32-x64/**
+          path: ${{ env.ARTIFACT_ROOT }}/**
           if-no-files-found: error
           retention-days: 14
