@@ -1144,6 +1144,24 @@ type CindyMediaPreferenceKind = {
   defaultModel: CindyMediaPreferenceOption | null;
 };
 
+type ElectronLocalDbSessionListOptions = {
+  includePinned?: boolean;
+  fresh?: boolean;
+  usageHistory?: boolean;
+};
+type ElectronLocalDbSessionListRegularOptions = Omit<
+  ElectronLocalDbSessionListOptions,
+  'usageHistory'
+> & {
+  usageHistory?: false | undefined;
+};
+type ElectronLocalDbSessionListUsageOptions = Omit<
+  ElectronLocalDbSessionListOptions,
+  'usageHistory'
+> & {
+  usageHistory: true;
+};
+
 interface ElectronAPI {
   platform: string;
   /** 当前 Desktop 构建是否具备 Beta 更新渠道。 */
@@ -3232,7 +3250,7 @@ interface ElectronAPI {
         };
         visibleDeptIds: string[];
         categories?: string[];
-        tags?: Array<{ slug: string; name: string; source?: 'author' | 'platform' }>;
+        tags?: Array<{ slug: string; name: string; source?: 'platform' }>;
         githubUrl?: string | null;
         publishedAt: string;
         downloads: number;
@@ -3276,6 +3294,7 @@ interface ElectronAPI {
         summary?: string;
         description?: string;
         tags?: string[];
+        contentLocale?: import('../shared/locale').SupportedLocale;
         visibility?: 'private' | 'shared' | 'public';
         /** 归属统一参数:团队 slug / od- 部门 id;null = 收回到个人 */
         teamSlug?: string | null;
@@ -3352,7 +3371,9 @@ interface ElectronAPI {
       names: string[];
       error?: string;
     }>;
-    listCategories: () => Promise<{
+    listCategories: (params?: {
+      scope?: import('../shared/skillhubCatalog').SkillhubCatalogScope;
+    }) => Promise<{
       success: boolean;
       categories?: import('../shared/skillhubCategory').MarketCategory[];
       totalCount?: number;
@@ -4369,11 +4390,26 @@ interface ElectronAPI {
       ) => () => void;
     };
     sessions: {
-      list: (
-        limit?: number,
-        status?: 'active' | 'archived' | 'all',
-        options?: { includePinned?: boolean; fresh?: boolean },
-      ) => Promise<import('@/lib/ccAgent.types').Session[]>;
+      list: {
+        (
+          limit?: number,
+          status?: 'active' | 'archived' | 'all',
+          options?: ElectronLocalDbSessionListRegularOptions,
+        ): Promise<import('@/lib/ccAgent.types').Session[]>;
+        (
+          limit?: number,
+          status?: 'active' | 'archived' | 'all',
+          options?: ElectronLocalDbSessionListUsageOptions,
+        ): Promise<import('@/lib/ccAgent.types').UsageHistorySession[]>;
+        (
+          limit?: number,
+          status?: 'active' | 'archived' | 'all',
+          options?: ElectronLocalDbSessionListOptions,
+        ): Promise<
+          | import('@/lib/ccAgent.types').Session[]
+          | import('@/lib/ccAgent.types').UsageHistorySession[]
+        >;
+      };
       create: (body?: {
         id?: string;
         workingDir?: string;
@@ -6131,7 +6167,8 @@ interface ElectronAPI {
       ) => () => void;
       /** 用量历史聚合 (首页仪表盘)。wire 形态与 main/usage/usageHistory.ts 的 UsageHistoryPayload 同形。 */
       getHistory: (opts?: {
-        days?: number;
+        days?: number | 'all';
+        modelDays?: number | 'all';
         forceRefresh?: boolean;
       }) => Promise<import('../main/usage/usageHistory').UsageHistoryPayload>;
       onTodaySpendChanged: (
@@ -6674,7 +6711,7 @@ interface SkillhubInfoResult {
   visibleDeptIds: string[];
   visibleDeptNames?: string[];
   categories?: string[];
-  tags?: Array<{ slug: string; name: string; source?: 'author' | 'platform' }>;
+  tags?: Array<{ slug: string; name: string; source?: 'platform' }>;
   githubUrl?: string | null;
   changelog?: string;
   publishedAt: string;
