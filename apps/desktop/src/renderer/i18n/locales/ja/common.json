@@ -565,12 +565,14 @@
         "hint": "初回に確認します。後からここで変更できます。",
         "aria": "メインウィンドウを閉じるときの動作を選択",
         "tray": "トレイに最小化",
+        "minimize": "ウィンドウを最小化",
         "quit": "Cindy を終了"
       },
       "closePrompt": {
         "title": "Cindy を閉じる",
         "message": "メインウィンドウを閉じるときの動作を選択してください。",
-        "detail": "システムトレイに最小化すると、タスクは実行を続けます。終了するにはトレイアイコンを右クリックします。後から設定で変更できます。"
+        "detail": "システムトレイに最小化すると、タスクは実行を続けます。終了するにはトレイアイコンを右クリックします。後から設定で変更できます。",
+        "linuxDetail": "ウィンドウを最小化しても、タスクは実行を続けます。タスクバーまたはウィンドウ一覧から Cindy を復元できます。後から設定で変更することもできます。"
       },
       "trayMenu": {
         "show": "Cindy を開く",
@@ -752,7 +754,7 @@
         "description": "Linux は現在 Ubuntu 22.04 / 24.04 向けの .deb として提供されます。新しいビルドがある場合、アプリがダウンロードし、インストール時にシステムパスワードを求めます。",
         "item1": "初回は sudo apt install ./cindy-<バージョン>-<アーキテクチャ>.deb でインストールします（x64 は amd64、arm64 は arm64）。",
         "item2": "アプリ内更新は .deb をダウンロードします。更新を選ぶと、システム権限の確認後に上書きインストールします。",
-        "item3": "インストールにパスワードが必要なため、Linux では Beta チャネルとアイドル時の自動インストールは提供しません。"
+        "item3": "Linux x64 では Beta チャネルを利用できますが、arm64 は現時点で利用できません。インストールにはシステム認証が必要なため、どちらもアイドル時の自動インストールには対応していません。"
       },
       "qnaTitle": "そのまま質問する",
       "qnaDescription": "overview に載っていない内容でも、やりたいことを聞けば次に開く場所や進め方を案内します。",
@@ -6139,6 +6141,10 @@
       "rotateDevice": "デバイスを回転",
       "lockScreen": "画面をロック",
       "unlockScreen": "画面をロック解除",
+      "copyScreenshot": "スクリーンショットをコピー",
+      "screenshotCopied": "シミュレータのスクリーンショットをコピーしました",
+      "screenshotCopyFailed": "シミュレータのスクリーンショットをコピーできませんでした。もう一度お試しください。",
+      "moreControls": "その他のシミュレータ操作",
       "controlsUnavailable": "シミュレータの操作は一時的に使用できません",
       "enterTextBeforeSending": "送信するテキストを入力してください",
       "agentBusyTitle": "Agent がこのデバイスを使用中",
@@ -6174,7 +6180,7 @@
         }
       },
       "nativeRecovery": {
-        "available": "Native アクセラレーションは現在利用できません。再試行中も WDA の画面と操作は利用できます。",
+        "available": "Native アクセラレーションは現在利用できません。フレームレートが低下し、操作の反応が遅くなる場合があります。",
         "action": "Native を復旧",
         "recovering": "Native アクセラレーションを復旧しています。現在の WDA の画面と操作は引き続き利用できます。",
         "recoveringAction": "Native を復旧中…",
@@ -6201,7 +6207,8 @@
         "stop": "デバイスを停止中…",
         "detach": "デバイスを切断中…",
         "grant": "Agent の操作権限を更新中…",
-        "control": "入力制御を更新中…"
+        "control": "入力制御を更新中…",
+        "screenshot": "シミュレータのスクリーンショットをコピー中…"
       },
       "setup": {
         "localMac": "Mac のローカル Cindy セッションでこのプロジェクトを開いてください。",
@@ -11234,6 +11241,32 @@
         "action": "注文 ID {{id}} をコピー",
         "success": "注文 ID をコピーしました",
         "failed": "注文 ID をコピーできませんでした。もう一度お試しください。"
+      },
+      "invoice": {
+        "action": "請求書を申請",
+        "title": "請求書を申請",
+        "description": "請求書の発行を申請するには、以下の情報を {{email}} までメールでお送りください。",
+        "requiredInfo": "メールには以下の情報を記載してください：",
+        "emailSubject": "注文 {{orderId}} の請求書発行申請",
+        "emailBody": "こんにちは。\n\n以下の注文について請求書の発行を申請します。\n\n────────────────────\n注文 ID：{{orderId}}\nアプリケーション：{{application}}\n支払い方法：{{paymentMethod}}\n請求金額：{{amount}}\n請求書宛名：\n担当者名：\n電話番号：\nメールアドレス：\n────────────────────\n\nよろしくお願いいたします。",
+        "sendAction": "請求書の申請を送信",
+        "emailCopied": "サポートメールアドレスをコピーしました",
+        "emailCopyFailed": "サポートメールアドレスをコピーできませんでした。もう一度お試しください。",
+        "sendFailed": "メールアプリを開けませんでした。{{email}} まで手動でメールをお送りください。",
+        "gmailFallbackTitle": "Gmailを開きますか？",
+        "gmailFallbackDescription": "請求書の申請には注文情報が含まれます。Gmailを開くと、この情報がGoogleに共有されます。続行しますか？",
+        "gmailFallbackConfirm": "Gmailを開く",
+        "notAvailable": "情報なし",
+        "fields": {
+          "orderId": "注文 ID",
+          "application": "アプリケーション",
+          "paymentMethod": "支払い方法",
+          "amount": "請求金額",
+          "invoiceTitle": "請求書宛名",
+          "contact": "担当者名",
+          "phone": "電話番号",
+          "email": "メールアドレス"
+        }
       },
       "states": {
         "completed": "完了",

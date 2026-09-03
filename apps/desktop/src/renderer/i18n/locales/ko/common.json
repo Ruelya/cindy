@@ -565,12 +565,14 @@
         "hint": "처음 닫을 때 묻습니다. 나중에 여기에서 변경할 수 있습니다.",
         "aria": "기본 창을 닫을 때 동작 선택",
         "tray": "트레이로 최소화",
+        "minimize": "창 최소화",
         "quit": "Cindy 종료"
       },
       "closePrompt": {
         "title": "Cindy 닫기",
         "message": "기본 창을 닫을 때 어떻게 할까요?",
-        "detail": "시스템 트레이로 최소화하면 작업이 계속 실행됩니다. 종료하려면 트레이 아이콘을 오른쪽 클릭하세요. 나중에 설정에서 변경할 수 있습니다."
+        "detail": "시스템 트레이로 최소화하면 작업이 계속 실행됩니다. 종료하려면 트레이 아이콘을 오른쪽 클릭하세요. 나중에 설정에서 변경할 수 있습니다.",
+        "linuxDetail": "창을 최소화해도 작업은 계속 실행됩니다. 작업 표시줄이나 창 개요에서 Cindy를 복원할 수 있으며, 나중에 설정에서 이 선택을 변경할 수도 있습니다."
       },
       "trayMenu": {
         "show": "Cindy 열기",
@@ -752,7 +754,7 @@
         "description": "Linux는 현재 Ubuntu 22.04 / 24.04용 .deb로 제공됩니다. 새 빌드가 있으면 앱이 다운로드하고, 설치할 때 시스템 비밀번호를 묻습니다.",
         "item1": "처음 설치할 때는 sudo apt install ./cindy-<버전>-<아키텍처>.deb 를 사용하세요(x64는 amd64, arm64는 arm64).",
         "item2": "앱 안 업데이트는 .deb를 다운로드합니다. 업데이트를 선택하면 시스템 권한 확인 후 덮어써 설치합니다.",
-        "item3": "설치에 비밀번호가 필요하므로 Linux에서는 Beta 채널과 유휴 상태 자동 설치를 제공하지 않습니다."
+        "item3": "Linux x64에서는 Beta 채널을 사용할 수 있지만 arm64는 아직 지원하지 않습니다. 설치에는 시스템 권한 승인이 필요하므로 두 아키텍처 모두 유휴 상태 자동 설치를 지원하지 않습니다."
       },
       "qnaTitle": "바로 질문하기",
       "qnaDescription": "overview 에 없는 내용이라도 하고 싶은 일을 물어보면 다음에 열어야 할 곳이나 진행 방법을 안내합니다.",
@@ -6139,6 +6141,10 @@
       "rotateDevice": "기기 회전",
       "lockScreen": "화면 잠금",
       "unlockScreen": "화면 잠금 해제",
+      "copyScreenshot": "스크린샷 복사",
+      "screenshotCopied": "시뮬레이터 스크린샷을 복사했습니다",
+      "screenshotCopyFailed": "시뮬레이터 스크린샷을 복사하지 못했습니다. 다시 시도하세요.",
+      "moreControls": "추가 시뮬레이터 제어",
       "controlsUnavailable": "시뮬레이터 제어를 일시적으로 사용할 수 없습니다",
       "enterTextBeforeSending": "보낼 텍스트를 먼저 입력하세요",
       "agentBusyTitle": "Agent가 이 기기를 사용 중",
@@ -6174,7 +6180,7 @@
         }
       },
       "nativeRecovery": {
-        "available": "현재 Native 가속을 사용할 수 없습니다. 다시 시도하는 동안에도 WDA 화면과 제어는 계속 사용할 수 있습니다.",
+        "available": "현재 Native 가속을 사용할 수 없습니다. 프레임 속도가 낮아지고 조작 반응이 느려질 수 있습니다.",
         "action": "Native 복구 시도",
         "recovering": "Native 가속을 복구하는 중입니다. 현재 WDA 화면과 제어는 계속 사용할 수 있습니다.",
         "recoveringAction": "Native 복구 중…",
@@ -6201,7 +6207,8 @@
         "stop": "기기 중지 중…",
         "detach": "기기 연결 해제 중…",
         "grant": "Agent 제어 권한 업데이트 중…",
-        "control": "입력 제어 업데이트 중…"
+        "control": "입력 제어 업데이트 중…",
+        "screenshot": "시뮬레이터 스크린샷 복사 중…"
       },
       "setup": {
         "localMac": "Mac의 로컬 Cindy 세션에서 이 프로젝트를 여세요.",
@@ -11234,6 +11241,32 @@
         "action": "주문 ID {{id}} 복사",
         "success": "주문 ID를 복사했습니다",
         "failed": "주문 ID를 복사하지 못했습니다. 다시 시도해 주세요."
+      },
+      "invoice": {
+        "action": "세금계산서 신청",
+        "title": "세금계산서 신청",
+        "description": "세금계산서 발급을 신청하려면 다음 정보를 {{email}}로 보내 주세요.",
+        "requiredInfo": "이메일에 다음 정보를 포함해 주세요:",
+        "emailSubject": "주문 {{orderId}} 세금계산서 발급 신청",
+        "emailBody": "안녕하세요.\n\n다음 주문에 대한 세금계산서 발급을 신청합니다.\n\n────────────────────\n주문 ID: {{orderId}}\n애플리케이션: {{application}}\n결제 수단: {{paymentMethod}}\n발행 금액: {{amount}}\n청구서 제목: \n담당자: \n전화번호: \n이메일: \n────────────────────\n\n감사합니다.",
+        "sendAction": "세금계산서 신청 보내기",
+        "emailCopied": "고객센터 이메일을 복사했습니다",
+        "emailCopyFailed": "고객센터 이메일을 복사하지 못했습니다. 다시 시도해 주세요.",
+        "sendFailed": "이메일 앱을 열 수 없습니다. {{email}}로 직접 이메일을 보내 주세요.",
+        "gmailFallbackTitle": "Gmail을 대신 열까요?",
+        "gmailFallbackDescription": "청구서 신청에 주문 정보가 포함되어 있습니다. Gmail을 열면 이 정보가 Google에 공유됩니다. 계속하시겠어요?",
+        "gmailFallbackConfirm": "Gmail 열기",
+        "notAvailable": "정보 없음",
+        "fields": {
+          "orderId": "주문 ID",
+          "application": "애플리케이션",
+          "paymentMethod": "결제 수단",
+          "amount": "발행 금액",
+          "invoiceTitle": "청구서 제목",
+          "contact": "담당자",
+          "phone": "전화번호",
+          "email": "이메일"
+        }
       },
       "states": {
         "completed": "완료",
