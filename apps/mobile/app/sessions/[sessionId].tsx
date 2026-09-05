@@ -45,7 +45,6 @@ import {
   AppState,
   BackHandler,
   Keyboard,
-  KeyboardAvoidingView,
   Linking,
   Platform,
   Pressable,
@@ -349,6 +348,7 @@ import {
 } from '@/session/MobileComposerInputRow';
 import { VoiceRecordingPillContent, useMobileVoiceRecordingTimer } from '@/session/VoiceRecordingPill';
 import { useComposerCardTransition } from '@/session/useComposerCardTransition';
+import { ComposerKeyboardAvoidingView } from '@/session/ComposerKeyboardAvoidingView';
 import { useComposerResize } from '@/session/useComposerResize';
 import { useMobileKeyboardState } from '@/session/useMobileKeyboardState';
 import { buildSessionComposerLayout } from '@/session/sessionComposerLayout';
@@ -2709,7 +2709,7 @@ export default function SessionScreen() {
     || permissionSheetOpen
     || voiceIsBusy
     || composerVoiceHoldActive;
-  useComposerCardTransition(composerCardActive);
+  useComposerCardTransition(composerCardActive, keyboardState);
   const composerChromeHeight = useMemo(() => {
     const statusReserve = voiceStatusVisible
       ? COMPOSER_STATUS_ROW_RESERVED_HEIGHT + COMPOSER_STACK_GAP_HEIGHT
@@ -3017,7 +3017,7 @@ export default function SessionScreen() {
     return active;
   }, [isPointInsideSendButton]);
   // Bottom padding the message list needs to clear the composer = the composer's own height only.
-  // The keyboard lift is already applied once by the KeyboardAvoidingView (iOS behavior="padding"),
+  // The keyboard lift is already applied once by ComposerKeyboardAvoidingView,
   // so ALSO adding keyboardBottomInset here double-counted the keyboard and shoved the conversation
   // up (badly visible once the list bottom-anchors its content). Keyboard-closed is unchanged —
   // keyboardBottomInset is 0 then, so this matches the previous value.
@@ -4436,6 +4436,9 @@ export default function SessionScreen() {
     () => sending || canStopQueue || remoteSessionRunning || currentTurnStreaming,
     [canStopQueue, currentTurnStreaming, remoteSessionRunning, sending],
   );
+  // Sending/queueing drives the composer immediately, but cannot reopen the loaded previous
+  // turn before the new user message arrives. Only remote activity drives message grouping.
+  const isMessageListStreaming = remoteSessionRunning || currentTurnStreaming;
   // 活动条信号去抖:isSessionStreaming 由四个来源(sending / canStopQueue /
   // remoteSessionRunning / currentTurnStreaming)拼成,它们交接时会漏出一两帧空隙
   // ——实测日志里 streaming 1→0→1,活动条跟着闪一下、计时还被重置回 0s。
@@ -4668,7 +4671,7 @@ export default function SessionScreen() {
         messageStructureToken,
         options: {
           autoResumePending: inputProjection.autoResumePending,
-          isSessionStreaming,
+          isSessionStreaming: isMessageListStreaming,
           renderOrphanTaskUpdates: makerTurnRunning,
           sessionId,
         },
@@ -4715,12 +4718,12 @@ export default function SessionScreen() {
         stablePrefixItemCount,
       };
     },
-    [errorTailClientId, forkOrigin, i18nInstance.language, inputProjection.autoResumePending, isSessionStreaming, makerTurnRunning, messageStructureToken, projectedMessages, projectedMessageStructureChangedIndexes, sessionId, taskUpdates],
+    [errorTailClientId, forkOrigin, i18nInstance.language, inputProjection.autoResumePending, isMessageListStreaming, makerTurnRunning, messageStructureToken, projectedMessages, projectedMessageStructureChangedIndexes, sessionId, taskUpdates],
   );
   const renderItems = renderWindow.items;
   const renderItemsStructureKey = useMemo(
     () => ({}),
-    [errorTailClientId, forkOrigin, i18nInstance.language, inputProjection.autoResumePending, isSessionStreaming, makerTurnRunning, messageStructureToken, sessionId, taskUpdates],
+    [errorTailClientId, forkOrigin, i18nInstance.language, inputProjection.autoResumePending, isMessageListStreaming, makerTurnRunning, messageStructureToken, sessionId, taskUpdates],
   );
   // Reconciliation must only use committed rows. Unlike the prefix cache above, a speculative
   // render-item baseline could leak rows from an abandoned render and destabilize tail memoization.
@@ -9132,7 +9135,8 @@ export default function SessionScreen() {
 
   return (
     <View style={styles.safeArea} testID="session.screen">
-      <KeyboardAvoidingView
+      <ComposerKeyboardAvoidingView
+        keyboard={keyboardState}
         // 抽屉开着时把背后内容从读屏树里摘掉:iOS 用 accessibilityElementsHidden
         // (与抽屉侧 accessibilityViewIsModal 配对),Android 用 importantForAccessibility
         // ——后者才对 TalkBack 生效(与 ComposerRichInput 的双平台配对惯例一致)。
@@ -10011,7 +10015,7 @@ export default function SessionScreen() {
           ) : null}
           </View>
         </View>
-      </KeyboardAvoidingView>
+      </ComposerKeyboardAvoidingView>
       {shareSelectionActive && selectedShareMessages.length > 0 ? (
         <ConversationShareSvg
           allShareableIds={allShareableIds}

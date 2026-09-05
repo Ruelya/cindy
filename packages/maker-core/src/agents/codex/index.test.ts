@@ -17092,7 +17092,7 @@ describe('CodexAgent MCP thread context hooks', () => {
     }
   });
 
-  it('emits only monotonic request segments and keeps reasoning as a non-additive detail', async () => {
+  it.each([undefined, 20_000])('emits monotonic segments with cache-write subset %s and non-additive reasoning', async (cacheWriteInputTokens) => {
     const agent = new CodexAgent(createDeps());
     const host = installFakeHost(agent);
     const handle = await agent.startSession({
@@ -17118,6 +17118,7 @@ describe('CodexAgent MCP thread context hooks', () => {
           totalTokens: 60_007,
           inputTokens: 60_000,
           cachedInputTokens: 10_000,
+          cacheWriteInputTokens,
           outputTokens: 7,
           reasoningOutputTokens: 3,
         },
@@ -17125,6 +17126,7 @@ describe('CodexAgent MCP thread context hooks', () => {
           totalTokens: 60_007,
           inputTokens: 60_000,
           cachedInputTokens: 10_000,
+          cacheWriteInputTokens,
           outputTokens: 7,
           reasoningOutputTokens: 3,
         },
@@ -17170,16 +17172,16 @@ describe('CodexAgent MCP thread context hooks', () => {
 
     const done = events.find((event) => event.type === 'done');
     expect((done?.data as { usage?: unknown }).usage).toMatchObject({
-      promptTokens: 100_000,
+      promptTokens: 100_000 - (cacheWriteInputTokens ?? 0),
       completionTokens: 11,
       reasoningTokens: 5,
       cachedTokens: 15_000,
       segments: [
         {
-          inputTokens: 50_000,
+          inputTokens: 50_000 - (cacheWriteInputTokens ?? 0),
           outputTokens: 7,
           cacheReadTokens: 10_000,
-          cacheCreateTokens: 0,
+          cacheCreateTokens: cacheWriteInputTokens ?? 0,
           reasoningTokens: 3,
         },
         {
@@ -21872,32 +21874,48 @@ describe('CodexAgent.forkSdkSession', () => {
     }));
   });
 
-  it('forks from a temporary rollout copy without unsafe payload lines', async () => {
-    const agent = new CodexAgent(createDeps());
-    let copied = '';
-    const host = installFakeHost(agent, async (method, params) => {
-      if (method !== Method.ThreadFork) return undefined;
-      const forkPath = (params as { path?: string }).path;
-      if (forkPath) copied = await fs.readFile(forkPath, 'utf8');
-      return undefined;
-    });
+  it('forks the canonical source and materializes a sanitized lazy child rollout', async () => {
     const codexHome = await fs.mkdtemp(path.join(os.tmpdir(), 'xdt-codex-home-'));
     try {
+      const agent = new CodexAgent(createDeps());
       (agent as unknown as { codexHome: string }).codexHome = codexHome;
       const sessionsDir = path.join(codexHome, 'sessions', '2026', '06', '11');
       await fs.mkdir(sessionsDir, { recursive: true });
       const sourceRollout = path.join(sessionsDir, 'rollout-2026-06-11-source-thread-id.jsonl');
-      await fs.writeFile(
-        sourceRollout,
-        `${[
-          JSON.stringify({ payload: { type: 'message', role: 'user' } }),
-          JSON.stringify({ payload: { type: 'reasoning', encrypted_content: 'gAAA' } }),
-          JSON.stringify({ type: 'event_msg', payload: { type: 'image_generation_end', call_id: 'ig_1', result: 'data:image/png;base64,xxx' } }),
-          JSON.stringify({ type: 'response_item', payload: { type: 'image_generation_call', id: 'ig_1', result: 'data:image/png;base64,xxx' } }),
-          JSON.stringify({ payload: { type: 'message', role: 'assistant' } }),
-        ].join('\n')}\n`,
-        'utf8',
-      );
+      const childRollout = path.join(sessionsDir, 'rollout-2026-06-11-fork-thread-id.jsonl');
+      const rolloutText = `${[
+        JSON.stringify({ ordinal: 0, type: 'session_meta', payload: { id: 'source-thread-id', session_id: 'source-thread-id' } }),
+        JSON.stringify({ ordinal: 1, type: 'response_item', payload: { type: 'message', role: 'user' } }),
+        JSON.stringify({ ordinal: 2, type: 'response_item', payload: { type: 'reasoning', encrypted_content: 'gAAA' } }),
+        JSON.stringify({ ordinal: 3, type: 'event_msg', payload: { type: 'image_generation_end', call_id: 'ig_1', result: 'data:image/png;base64,xxx' } }),
+        JSON.stringify({ ordinal: 4, type: 'response_item', payload: { type: 'image_generation_call', id: 'ig_1', result: 'data:image/png;base64,xxx' } }),
+        JSON.stringify({ ordinal: 5, type: 'response_item', payload: { type: 'message', role: 'assistant' } }),
+      ].join('\n')}\n`;
+      await fs.writeFile(sourceRollout, rolloutText, 'utf8');
+      let childText = '';
+      const host = installFakeHost(agent, async (method, params) => {
+        if (method !== Method.ThreadFork) return undefined;
+        expect(params).not.toHaveProperty('path');
+        childText = `${[
+          JSON.stringify({
+            ordinal: 6,
+            type: 'session_meta',
+            payload: {
+              id: 'fork-thread-id',
+              session_id: 'fork-thread-id',
+              model_provider: 'target-provider',
+              history_base: {
+                thread_id: 'source-thread-id',
+                end_ordinal_exclusive: 6,
+                end_byte_offset: Buffer.byteLength(rolloutText),
+              },
+            },
+          }),
+          JSON.stringify({ ordinal: 7, type: 'event_msg', payload: { type: 'thread_settings_applied' } }),
+        ].join('\n')}\n`;
+        await fs.writeFile(childRollout, childText, 'utf8');
+        return undefined;
+      });
 
       const result = await agent.forkSdkSession({
         sourceSdkSessionId: 'source-thread-id',
@@ -21906,58 +21924,106 @@ describe('CodexAgent.forkSdkSession', () => {
       });
 
       expect(result.newSdkSessionId).toBe('fork-thread-id');
-      const forkParams = host.request.mock.calls[0]?.[1] as { path?: string };
-      expect(forkParams.path).toBeTruthy();
-      expect(copied).toContain('"message"');
-      expect(copied).toContain('"image_generation_call"');
-      expect(copied).toContain('"ig_1"');
-      expect(copied).not.toContain('"reasoning"');
-      expect(copied).not.toContain('encrypted_content');
-      expect(copied).not.toContain('"image_generation_end"');
-      expect(copied).not.toContain('"call_id"');
+      expect(host.unsubscribeThread).toHaveBeenCalledWith('fork-thread-id');
+      const child = await fs.readFile(childRollout, 'utf8');
+      expect(child).toContain('"id":"fork-thread-id"');
+      expect(child).not.toContain('history_base');
+      expect(child).toContain('role":"user"');
+      expect(child).not.toContain('encrypted_content');
+      expect(child).not.toBe(childText);
+      expect(await fs.readFile(sourceRollout, 'utf8')).toBe(rolloutText);
     } finally {
       await fs.rm(codexHome, { recursive: true, force: true });
     }
   });
 
-  it('rewrites oversized tool-output images in the stripped fork copy', async () => {
-    const agent = new CodexAgent(createDeps());
-    let copied = '';
-    installFakeHost(agent, async (method, params) => {
-      if (method !== Method.ThreadFork) return undefined;
-      const forkPath = (params as { path?: string }).path;
-      if (forkPath) copied = await fs.readFile(forkPath, 'utf8');
-      return undefined;
-    });
-    const codexHome = await fs.mkdtemp(path.join(os.tmpdir(), 'xdt-codex-home-'));
+  it('retires the one-shot fork host before materializing a lazy child rollout', async () => {
+    const codexHome = await fs.mkdtemp(path.join(os.tmpdir(), 'xdt-codex-home-order-'));
     try {
+      const agent = new CodexAgent(createDeps());
       (agent as unknown as { codexHome: string }).codexHome = codexHome;
-      const sessionsDir = path.join(codexHome, 'sessions', '2026', '08', '26');
+      const sessionsDir = path.join(codexHome, 'sessions', '2026', '09', '05');
       await fs.mkdir(sessionsDir, { recursive: true });
-      const sourceRollout = path.join(sessionsDir, 'rollout-2026-08-26-source-thread-id.jsonl');
-      const huge = `data:image/png;base64,${'A'.repeat(64 * 1024)}`;
-      await fs.writeFile(
-        sourceRollout,
-        `${[
-          JSON.stringify({ payload: { type: 'message', role: 'user' } }),
-          JSON.stringify({ payload: { type: 'custom_tool_call_output', call_id: 'shot', output: huge } }),
-        ].join('\n')}\n`,
-        'utf8',
-      );
+      const sourceRollout = path.join(sessionsDir, 'rollout-source-thread-id.jsonl');
+      const childRollout = path.join(sessionsDir, 'rollout-fork-thread-id.jsonl');
+      const sourceText = `${[
+        JSON.stringify({ ordinal: 0, type: 'session_meta', payload: { id: 'source-thread-id' } }),
+        JSON.stringify({ ordinal: 1, type: 'response_item', payload: { type: 'message', content: 'history' } }),
+      ].join('\n')}\n`;
+      await fs.writeFile(sourceRollout, sourceText, 'utf8');
+      const events: string[] = [];
+      const host = installFakeHost(agent, async (method) => {
+        if (method === Method.ThreadFork) {
+          await fs.writeFile(childRollout, `${[
+            JSON.stringify({
+              ordinal: 2,
+              type: 'session_meta',
+              payload: {
+                id: 'fork-thread-id',
+                history_base: {
+                  thread_id: 'source-thread-id',
+                  end_ordinal_exclusive: 2,
+                  end_byte_offset: Buffer.byteLength(sourceText),
+                },
+              },
+            }),
+            JSON.stringify({ ordinal: 3, type: 'event_msg', payload: { type: 'thread_settings_applied' } }),
+          ].join('\n')}\n`, 'utf8');
+        }
+        return undefined;
+      });
+      host.unsubscribeThread.mockImplementation(async () => { events.push('unsubscribe'); });
+      Object.defineProperty(agent, 'retireHostKey', {
+        value: vi.fn(async () => { events.push('retire'); }),
+      });
+
       await agent.forkSdkSession({
         sourceSdkSessionId: 'source-thread-id',
         upToMessageId: undefined,
         stripEncryptedReasoning: true,
       });
-      expect(copied).toContain('"shot"');
-      expect(copied).toContain('cindy-omitted-inline-image');
-      expect(copied).not.toContain(';base64,');
+
+      expect(events).toEqual(['unsubscribe', 'retire']);
+      expect(await fs.readFile(childRollout, 'utf8')).not.toContain('history_base');
     } finally {
       await fs.rm(codexHome, { recursive: true, force: true });
     }
   });
 
-  it('uses the rollout path returned by imported-thread preparation when stripping', async () => {
+  it('rewrites oversized tool-output images in the forked child', async () => {
+    const codexHome = await fs.mkdtemp(path.join(os.tmpdir(), 'xdt-codex-home-'));
+    try {
+      const agent = new CodexAgent(createDeps());
+      (agent as unknown as { codexHome: string }).codexHome = codexHome;
+      const sessionsDir = path.join(codexHome, 'sessions', '2026', '08', '26');
+      await fs.mkdir(sessionsDir, { recursive: true });
+      const sourceRollout = path.join(sessionsDir, 'rollout-2026-08-26-source-thread-id.jsonl');
+      const childRollout = path.join(sessionsDir, 'rollout-2026-08-26-fork-thread-id.jsonl');
+      const huge = `data:image/png;base64,${'A'.repeat(64 * 1024)}`;
+      const rolloutText = `${[
+        JSON.stringify({ payload: { type: 'message', role: 'user' } }),
+        JSON.stringify({ payload: { type: 'custom_tool_call_output', call_id: 'shot', output: huge } }),
+      ].join('\n')}\n`;
+      await fs.writeFile(sourceRollout, rolloutText, 'utf8');
+      installFakeHost(agent, async (method) => {
+        if (method === Method.ThreadFork) await fs.writeFile(childRollout, rolloutText, 'utf8');
+        return undefined;
+      });
+      await agent.forkSdkSession({
+        sourceSdkSessionId: 'source-thread-id',
+        upToMessageId: undefined,
+        stripEncryptedReasoning: true,
+      });
+      const child = await fs.readFile(childRollout, 'utf8');
+      expect(child).toContain('"shot"');
+      expect(child).toContain('cindy-omitted-inline-image');
+      expect(child).not.toContain(';base64,');
+    } finally {
+      await fs.rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  it('prepares an imported source before forking and sanitizes its local child', async () => {
     const externalHome = await fs.mkdtemp(path.join(os.tmpdir(), 'xdt-codex-external-'));
     const sourceRollout = path.join(externalHome, 'rollout-imported-thread.jsonl');
     await fs.writeFile(sourceRollout, [
@@ -21968,28 +22034,31 @@ describe('CodexAgent.forkSdkSession', () => {
     try {
       const prepareCodexResumeSession = vi.fn(async () => sourceRollout);
       const agent = new CodexAgent(createDeps({}, { prepareCodexResumeSession }));
-      let copied = '';
+      const codexHome = path.join(externalHome, 'codex-home');
+      const sessionsDir = path.join(codexHome, 'sessions', '2026', '09', '04');
+      const childRollout = path.join(sessionsDir, 'rollout-2026-09-04-fork-thread-id.jsonl');
+      await fs.mkdir(sessionsDir, { recursive: true });
       const host = installFakeHost(agent, async (method, params) => {
         if (method === Method.ThreadFork) {
-          const forkPath = (params as { path?: string }).path;
-          if (forkPath) copied = await fs.readFile(forkPath, 'utf8');
+          expect(params).not.toHaveProperty('path');
+          await fs.copyFile(sourceRollout, childRollout);
         }
         return undefined;
       });
-      // The normal CODEX_HOME scan cannot see the external path; the prepared
-      // path must still be used for the stripped fork.
-      (agent as unknown as { codexHome: string }).codexHome = path.join(externalHome, 'empty-home');
+      (agent as unknown as { codexHome: string }).codexHome = codexHome;
       await agent.forkSdkSession({
         sourceSdkSessionId: 'imported-thread',
         upToMessageId: undefined,
         stripEncryptedReasoning: true,
       });
       expect(prepareCodexResumeSession).toHaveBeenCalledWith('imported-thread');
-      expect(copied).toContain('"message"');
-      expect(copied).not.toContain('encrypted_content');
-      expect(host.request).toHaveBeenCalledWith(Method.ThreadFork, expect.objectContaining({
-        path: expect.any(String),
-      }));
+      const child = await fs.readFile(childRollout, 'utf8');
+      expect(child).toContain('"message"');
+      expect(child).not.toContain('encrypted_content');
+      expect(host.request).toHaveBeenCalledWith(
+        Method.ThreadFork,
+        expect.not.objectContaining({ path: expect.any(String) }),
+      );
     } finally {
       await fs.rm(externalHome, { recursive: true, force: true });
     }
@@ -30269,6 +30338,285 @@ describe('CodexAgent context window reporting', () => {
     await handle.close();
     await flush();
     expect(cardFrames()).toHaveLength(afterTerminal);
+  });
+});
+
+describe('CodexAgent custom provider context window override', () => {
+  it('uses a one-session host and injects the explicit window with the real model slug', async () => {
+    const agent = new CodexAgent(createDeps({}, {
+      resolveCodexThreadContextWindow: async (providerId, modelId) =>
+        providerId === 'mygpt' && modelId === 'gpt-5.6-sol' ? 1_050_000 : null,
+    }));
+    const host = installFakeHost(agent);
+    const handle = await agent.startSession({
+      sessionId: 'session-custom-ctxwin',
+      model: 'gpt-5.6-sol',
+      providerId: 'mygpt',
+      workingDir: '/repo',
+    });
+    const params = host.request.mock.calls.find(([method]) => method === Method.ThreadStart)?.[1] as {
+      model?: string;
+      config?: Record<string, unknown>;
+    };
+    expect(host.getHost).toHaveBeenCalledWith(
+      undefined,
+      'provider-oauth',
+      expect.objectContaining({
+        keyOverride: 'local-custom-context:session-custom-ctxwin',
+        hostPurpose: 'custom-context',
+        customContextModel: 'gpt-5.6-sol',
+        customContextWindow: 1_050_000,
+      }),
+    );
+    expect(params.model).toBe('gpt-5.6-sol');
+    expect(params.config?.model_context_window).toBe(1_050_000);
+    expect(params.config?.model_auto_compact_token_limit).toBe(997_500);
+    await handle.close();
+  });
+
+  it('keeps the shared host when async catalog preflight rejects an unknown custom slug', async () => {
+    const agent = new CodexAgent(createDeps({}, {
+      resolveCodexThreadContextWindow: async () => null,
+    }));
+    const host = installFakeHost(agent);
+    const handle = await agent.startSession({
+      sessionId: 'session-no-custom-ctxwin',
+      model: 'MiniMax-M3',
+      providerId: 'my-minimax',
+      workingDir: '/repo',
+    });
+    const params = host.request.mock.calls.find(([method]) => method === Method.ThreadStart)?.[1] as {
+      model?: string;
+      config?: Record<string, unknown>;
+    };
+    expect(params.model).toBe('MiniMax-M3');
+    expect(params.config?.model_context_window).toBeUndefined();
+    expect(params.config?.model_auto_compact_token_limit).toBeUndefined();
+    expect(host.getHost).toHaveBeenCalledWith(
+      undefined,
+      'provider-oauth',
+      { ignoreBindingLeases: 1 },
+    );
+    await handle.close();
+  });
+
+  it('retires the isolated custom-context app-server when its task closes', async () => {
+    const onHostRetired = vi.fn(async () => undefined);
+    const prepareCodexExtraSpawnConfig = vi.fn(async () => ({
+      extraArgs: ['-c', 'model_catalog_json="/tmp/custom-models.json"'],
+      extraEnv: {},
+      onHostRetired,
+    }));
+    const agent = new CodexAgent(createDeps({}, {
+      resolveCodexThreadContextWindow: (providerId, modelId) =>
+        providerId === 'mygpt' && modelId === 'gpt-5.6-sol' ? 700_000 : null,
+      prepareCodexExtraSpawnConfig,
+    }));
+
+    const handle = await agent.startSession({
+      sessionId: 'session-custom-host-lifecycle',
+      model: 'gpt-5.6-sol',
+      providerId: 'mygpt',
+      workingDir: '/repo',
+    });
+
+    expect(prepareCodexExtraSpawnConfig).toHaveBeenCalledWith([], {
+      remoteHostId: undefined,
+      credentialMode: 'provider-oauth',
+      hostPurpose: 'custom-context',
+      customContextModel: 'gpt-5.6-sol',
+      customContextWindow: 700_000,
+      customContextHostKey: 'local-custom-context:session-custom-host-lifecycle:1',
+    });
+    expect(Array.from(
+      (agent as unknown as { hosts: Map<string, unknown> }).hosts.keys(),
+    )).toEqual(['local-custom-context:session-custom-host-lifecycle']);
+    expect(createdTransports[0]?.closed).toBe(false);
+
+    await handle.close();
+
+    expect(createdTransports[0]?.closed).toBe(true);
+    expect(onHostRetired).toHaveBeenCalledOnce();
+    expect((agent as unknown as { hosts: Map<string, unknown> }).hosts.size).toBe(0);
+    await agent.dispose();
+  });
+
+  it.each([
+    ['thread/start', 'start', undefined],
+    ['thread/resume', 'resume', 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'],
+  ])('retires the isolated custom-context app-server when %s fails', async (method, label, resumeSessionId) => {
+    if (method === 'thread/start') {
+      MockCodexTransport.failThreadStart = true;
+    } else {
+      MockCodexTransport.onCreate = (transport) => {
+        transport.setMockResponse(Method.ThreadResume, {
+          error: { code: -32_000, message: 'thread resume boom' },
+        });
+      };
+    }
+    const agent = new CodexAgent(createDeps({}, {
+      resolveCodexThreadContextWindow: () => 700_000,
+      prepareCodexExtraSpawnConfig: async () => ({ extraArgs: [], extraEnv: {} }),
+    }));
+
+    await expect(agent.startSession({
+      sessionId: `session-custom-startup-failure-${label}`,
+      sessionInstanceId: `instance-custom-startup-failure-${label}`,
+      model: 'gpt-5.6-sol',
+      providerId: 'mygpt',
+      workingDir: '/repo',
+      ...(resumeSessionId ? { resumeSessionId } : {}),
+    })).rejects.toThrow(method === 'thread/start' ? 'thread start boom' : 'thread resume boom');
+
+    expect(createdTransports[0]?.closed).toBe(true);
+    expect((agent as unknown as { hosts: Map<string, unknown> }).hosts.size).toBe(0);
+    await agent.dispose();
+  });
+
+  it('retires the isolated custom-context app-server when initialize fails', async () => {
+    MockCodexTransport.onCreate = (transport) => {
+      transport.setMockResponse(Method.Initialize, {
+        error: { code: -32_000, message: 'initialize boom' },
+      });
+    };
+    const agent = new CodexAgent(createDeps({}, {
+      resolveCodexThreadContextWindow: () => 700_000,
+      prepareCodexExtraSpawnConfig: async () => ({ extraArgs: [], extraEnv: {} }),
+    }));
+
+    await expect(agent.startSession({
+      sessionId: 'session-custom-initialize-failure',
+      model: 'gpt-5.6-sol',
+      providerId: 'mygpt',
+      workingDir: '/repo',
+    })).rejects.toThrow('initialize boom');
+
+    expect(createdTransports[0]?.closed).toBe(true);
+    expect((agent as unknown as { hosts: Map<string, unknown> }).hosts.size).toBe(0);
+    await agent.dispose();
+  });
+
+  it('retires the isolated custom-context app-server when capability preparation fails', async () => {
+    const agent = new CodexAgent(createDeps({}, {
+      resolveCodexThreadContextWindow: () => 700_000,
+      prepareCodexExtraSpawnConfig: async () => ({ extraArgs: [], extraEnv: {} }),
+      resolveCapabilityRouting: async () => {
+        throw new Error('capability preparation boom');
+      },
+    }));
+
+    await expect(agent.startSession({
+      sessionId: 'session-custom-capability-failure',
+      model: 'gpt-5.6-sol',
+      providerId: 'mygpt',
+      workingDir: '/repo',
+    })).rejects.toThrow('capability preparation boom');
+
+    expect(createdTransports[0]?.closed).toBe(true);
+    expect((agent as unknown as { hosts: Map<string, unknown> }).hosts.size).toBe(0);
+    await agent.dispose();
+  });
+
+  it('creates a fresh custom-context host when the same session retries after startup failure', async () => {
+    MockCodexTransport.failThreadStart = true;
+    const agent = new CodexAgent(createDeps({}, {
+      resolveCodexThreadContextWindow: () => 700_000,
+      prepareCodexExtraSpawnConfig: async () => ({ extraArgs: [], extraEnv: {} }),
+    }));
+    const options = {
+      sessionId: 'session-custom-startup-retry',
+      model: 'gpt-5.6-sol',
+      providerId: 'mygpt',
+      workingDir: '/repo',
+    } as const;
+
+    await expect(agent.startSession(options)).rejects.toThrow('thread start boom');
+    expect(createdTransports[0]?.closed).toBe(true);
+
+    MockCodexTransport.failThreadStart = false;
+    const handle = await agent.startSession(options);
+
+    expect(createdTransports).toHaveLength(2);
+    expect(createdTransports[1]?.closed).toBe(false);
+    await handle.close();
+    expect(createdTransports[1]?.closed).toBe(true);
+    await agent.dispose();
+  });
+
+  it('reports catalog-boundary rebuilds without requiring a new business task', async () => {
+    let configuredWindow = 700_000;
+    const resolveCodexThreadContextWindow = (
+      providerId: string | null | undefined,
+      modelId: string,
+    ) =>
+      (providerId === 'mygpt' || providerId === 'mygpt-alt') && modelId === 'gpt-5.6-sol'
+        ? configuredWindow
+        : null;
+    const customAgent = new CodexAgent(createDeps({}, { resolveCodexThreadContextWindow }));
+    installFakeHost(customAgent);
+    const customHandle = await customAgent.startSession({
+      sessionId: 'session-custom-switch-guard',
+      model: 'gpt-5.6-sol',
+      providerId: 'mygpt',
+      workingDir: '/repo',
+    });
+
+    await expect(
+      customHandle.requiresModelSwitchRebuild?.('gpt-5.6-sol', { providerId: 'mygpt' }),
+    ).resolves.toBe(false);
+    await expect(
+      customHandle.requiresModelSwitchRebuild?.('gpt-5.6-sol', { providerId: 'mygpt-alt' }),
+    ).resolves.toBe(false);
+    await expect(
+      customHandle.requiresModelSwitchRebuild?.('gpt-5.4', { providerId: 'xd' }),
+    ).resolves.toBe(true);
+    configuredWindow = 900_000;
+    await expect(
+      customHandle.requiresModelSwitchRebuild?.('gpt-5.6-sol', { providerId: 'mygpt' }),
+    ).resolves.toBe(true);
+    await expect(customHandle.setModel?.('gpt-5.4', { providerId: 'xd' })).rejects.toThrow(
+      'requires rebuilding the current session handle',
+    );
+    await customHandle.close();
+
+    const normalAgent = new CodexAgent(createDeps({}, { resolveCodexThreadContextWindow }));
+    installFakeHost(normalAgent);
+    const normalHandle = await normalAgent.startSession({
+      sessionId: 'session-normal-switch-guard',
+      model: 'gpt-5.4',
+      providerId: 'xd',
+      workingDir: '/repo',
+    });
+
+    await expect(
+      normalHandle.requiresModelSwitchRebuild?.('gpt-5.4', { providerId: 'xd' }),
+    ).resolves.toBe(false);
+    await expect(
+      normalHandle.requiresModelSwitchRebuild?.('gpt-5.6-sol', { providerId: 'mygpt' }),
+    ).resolves.toBe(true);
+    await expect(normalHandle.setModel?.('gpt-5.6-sol', { providerId: 'mygpt' })).rejects.toThrow(
+      'requires rebuilding the current session handle',
+    );
+    await normalHandle.close();
+  });
+
+  it('includes custom-context hosts in local auth-boundary disposal', async () => {
+    const agent = new CodexAgent(createDeps({}, {
+      resolveCodexThreadContextWindow: () => 700_000,
+      prepareCodexExtraSpawnConfig: async () => ({ extraArgs: [], extraEnv: {} }),
+    }));
+    await agent.startSession({
+      sessionId: 'session-custom-auth-disposal',
+      model: 'gpt-5.6-sol',
+      providerId: 'mygpt',
+      workingDir: '/repo',
+    });
+
+    await agent.forceDisposeLocalHostForAuthChange('test custom catalog auth boundary');
+
+    expect(createdTransports[0]?.closed).toBe(true);
+    expect((agent as unknown as { hosts: Map<string, unknown> }).hosts.size).toBe(0);
+    await agent.dispose();
   });
 });
 
