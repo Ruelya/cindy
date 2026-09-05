@@ -4836,7 +4836,7 @@
         "fsWrite": "Can write files (create / modify)",
         "fsWriteDetail": "Its own private data folder is always writable. Writes into the current session's working directory follow the session's permission mode (auto-approve modes write directly; per-action modes ask you first). Any other folder always requires your confirmation. Files are always written by the host — the plugin itself never touches your file system.",
         "libraryPersist": "Can use a durable library (large files and databases)",
-        "libraryPersistDetail": "It gets a Cindy-managed storage area for your work (canvases, images, databases) with no normal plugin data quota. All file and database operations are executed by the host; the plugin only uses relative paths inside its own library and cannot touch your other files. It can also ask Cindy to show a library file in Finder or Explorer, or open the system Save As dialog so you choose where a copy goes; cancelling Save As copies nothing. Uninstalling the plugin does not delete this data; deletion requires separate confirmation in Cindy settings.",
+        "libraryPersistDetail": "It gets a Cindy-managed storage area for your work (canvases, images, databases) with no normal plugin data quota. All file and database operations are executed by the host; the plugin only uses relative paths inside its own library and cannot touch your other files. It can also ask Cindy to show a library file in Finder or Explorer, or open the system Save As dialog so you choose where a copy goes; cancelling Save As copies nothing. It can also write a PNG bitmap to the system clipboard with no confirmation dialog; this overwrites the current clipboard. Uninstalling the plugin does not delete this data; deletion requires separate confirmation in Cindy settings.",
         "networkHost": "Accesses the network domain {{host}}",
         "networkSecret": "Needs a credential from you: \"{{name}}\"",
         "networkSecretGhostInputDetail": "Collected by this plugin's own settings UI — the plugin page sees the value at entry time. It is then handed to the host in one step for encrypted storage; once stored, the plugin can never read it back, and the host injects it only for the domains it declares.",
@@ -7190,6 +7190,7 @@
         "discountedVsStandard": "Discounted · {{percent}}% off standard"
       },
       "trigger": {
+        "currentAndNext": "Current: {{current}}\nNext message: {{next}}",
         "placeholder": "Select model",
         "aria": "Select model. Current: {{model}}",
         "ariaWithEffort": "Select model. Current: {{model}}, effort: {{effort}}",
@@ -7232,6 +7233,9 @@
         "fastBadge": "Fast"
       },
       "source": {
+        "unavailable": "Model unavailable",
+        "reconnect": "Reconnect",
+        "manage": "Manage source",
         "railLabel": "Source",
         "connect": "Add a model",
         "connectCta": "Connect a source →",
@@ -7248,10 +7252,6 @@
         "railAll": "All",
         "favoritesGroup": "Favorites",
         "favoritesEmpty": "No favorites yet — hover a model and hit ☆ to pin it here",
-        "layoutBadge": "Try style B",
-        "layoutClassic": "Back to style A",
-        "layoutTryUnified": "Try the new picker",
-        "layoutOriginal": "Back to old picker",
         "addFavorite": "Save to favorites",
         "customize": "Customize",
         "removeFavorite": "Remove from favorites",
@@ -7846,6 +7846,7 @@
     },
     "runningStatus": {
       "tokenRate": "{{rate}} tok/s",
+      "tokenRateDescription": "The main Agent’s average generation speed for this turn, including thinking and excluding tool execution and approval waits. Updated with reported usage; the adjacent timer shows total turn time.",
       "tokenCount": "{{tokens}} tok"
     },
     "shareImage": {
@@ -8597,6 +8598,8 @@
       "runningTool": "{{tool}} running…"
     },
     "remoteSession": {
+      "syncing": "Syncing…",
+      "recovered": "Restored",
       "reconnecting": "Connection to the controlled device was lost — reconnecting…",
       "hostOffline": "The controlled device is offline; can't sync right now",
       "degraded": "Connection to the controlled device is unstable — retrying automatically…",
