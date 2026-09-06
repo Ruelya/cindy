@@ -1283,6 +1283,7 @@ interface ElectronAPI {
 
   /** 意识仓库 —— 数据模型与校验见 shared/ghost.ts,main 端见 main/cindy-brain/。 */
   ghosts: {
+    recommendationsSync: () => import('../shared/homePluginRecommendations').HomePluginRecommendationsSnapshot;
     /** 首帧同步拉取已装清单(规则 7:意识面板与内置面板同帧注册,无跳变)。 */
     listSync: () => { ghosts: import('../shared/ghost').InstalledGhost[] };
     onForgeOidcInstallConfirmRequest: (
@@ -5175,6 +5176,23 @@ interface ElectronAPI {
     resetModelPriceOverride: (
       target: import('../shared/modelPriceOverride').ModelPriceOverrideTarget,
     ) => Promise<import('../shared/modelPriceOverride').ModelPriceOverrideView>;
+    /**
+     * 单模型上下文上限 override(设置 → 模型 → 高级设置)。窗口是自动压缩比例的分母,
+     * 调小它让压缩按用户设的长度提前触发。target 与价格 override 同形。
+     * set 传 null = 恢复默认(删 override)。
+     */
+    getModelContextLimit: (
+      target: import('../shared/modelContextLimit').ModelContextLimitTarget,
+    ) => Promise<import('../shared/modelContextLimit').ModelContextLimitView>;
+    setModelContextLimit: (
+      target: import('../shared/modelContextLimit').ModelContextLimitTarget,
+      limit: number | null,
+      owner: import('../shared/modelContextLimit').ModelContextLimitOwner,
+    ) => Promise<import('../shared/modelContextLimit').ModelContextLimitView>;
+    resetModelContextLimit: (
+      target: import('../shared/modelContextLimit').ModelContextLimitTarget,
+      owner: import('../shared/modelContextLimit').ModelContextLimitOwner,
+    ) => Promise<import('../shared/modelContextLimit').ModelContextLimitView>;
 
     // 「在新窗口打开」会话多开
     openSessionInNewWindow: (sessionId: string, deviceId?: string | null) => Promise<void>;
