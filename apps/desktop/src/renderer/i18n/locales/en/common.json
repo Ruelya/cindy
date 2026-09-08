@@ -5079,6 +5079,8 @@
         "sidebarEntryTitle": "Sidebar entry",
         "showInSidebar": "Show in sidebar",
         "sidebarEntryDescription": "When turned on, “{{title}}” appears in the sidebar. Hiding it does not disable the plugin.",
+        "iosSimulatorAutoOpenTitle": "Open the embedded Simulator panel automatically",
+        "iosSimulatorAutoOpenDescription": "Show the Simulator in the right sidebar after starting it or launching an app. When off, you can still open it manually; all other features are unchanged.",
         "openTool": "View details for Tool {{name}}",
         "noToolDescription": "No description is available for this Tool.",
         "viewAllTools": "See All",
@@ -8475,7 +8477,10 @@
       "copyContent": "Copy content",
       "openInExplorer": "Open in file manager",
       "close": "Close",
-      "editIndex": "Edit {{index}}/{{total}}"
+      "editIndex": "Edit {{index}}/{{total}}",
+      "omittedDiffSegments": "{{count}} additional diff segments omitted from preview",
+      "diffPreviewTruncated": "Some diff lines are hidden in this preview",
+      "diffPreviewLoading": "Preparing diff preview…"
     },
     "textLightbox": {
       "unreadable": "Unable to read this file",
