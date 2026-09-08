@@ -4,6 +4,9 @@ on:
   schedule:
     # Four times per day. GitHub cron uses UTC.
     - cron: '17 */6 * * *'
+  push:
+    paths:
+      - '.github/workflows/sync-upstream.yml'
   workflow_dispatch:
     inputs:
       build_even_if_up_to_date:
@@ -52,20 +55,24 @@ jobs:
         run: |
           set -euo pipefail
           before="$(git rev-parse HEAD)"
+          upstream_sha="$(git rev-parse upstream/main)"
           echo "Fork before merge: $before"
-          echo "Upstream main:     $(git rev-parse upstream/main)"
+          echo "Upstream main:     $upstream_sha"
 
-          # Intentionally use a real merge instead of reset/force-push so fork-only
-          # commits (including telemetry-free CI) are preserved. A conflict fails
-          # this workflow and nothing is pushed.
-          git merge --no-edit upstream/main
+          if git merge-base --is-ancestor "$upstream_sha" "$before"; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "merged_sha=$before" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # GITHUB_TOKEN cannot push changes under .github/workflows. Keep the
+          # fork's workflow set while merging all other upstream changes.
+          git merge --no-ff --no-commit upstream/main
+          git restore --source="$before" --staged --worktree -- .github/workflows
+          git commit --no-edit
 
           after="$(git rev-parse HEAD)"
-          if [[ "$after" == "$before" ]]; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
           echo "merged_sha=$after" >> "$GITHUB_OUTPUT"
 
       - name: Push merged main
